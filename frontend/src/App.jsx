@@ -4,8 +4,26 @@ import {
   FolderGit2, Hammer, ClipboardList, GraduationCap, ShieldQuestion, Circle,
 } from "lucide-react";
 
-const API = "http://localhost:8000";
-const WS = "ws://localhost:8000/ws";
+// Resolve the backend address so the UI works across machines without a rebuild.
+// Priority:
+//   1. ?backend=host:port in the URL (remembered in localStorage for next time)
+//   2. VITE_BACKEND set at build time
+//   3. the same host this page was opened from, on port 8000
+// So opening http://<server-ip>:5173 from your laptop or phone automatically
+// talks to the backend on <server-ip>:8000 — no code change needed.
+function resolveBackend() {
+  const qs = new URLSearchParams(window.location.search);
+  if (qs.get("backend")) localStorage.setItem("cc_backend", qs.get("backend"));
+  const override = qs.get("backend") || localStorage.getItem("cc_backend");
+  let host = override || import.meta.env.VITE_BACKEND || `${window.location.hostname}:8000`;
+  host = host.replace(/^https?:\/\//, "").replace(/^wss?:\/\//, "").replace(/\/+$/, "");
+  const secure = window.location.protocol === "https:";
+  return {
+    API: `${secure ? "https" : "http"}://${host}`,
+    WS: `${secure ? "wss" : "ws"}://${host}/ws`,
+  };
+}
+const { API, WS } = resolveBackend();
 
 const C = {
   bg: "#0F1714", panel: "#15201B", raised: "#1C2A24", raisedHi: "#22332C",

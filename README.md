@@ -57,6 +57,46 @@ npm run dev
 Open **http://localhost:5173**. The dot in the top right turns green when it's
 talking to the backend.
 
+## Run it across your network (drive agents from another device)
+
+The setup above is single-machine. To run the agents on one computer (a spare
+laptop, a Mac mini, a home server) and command them from your phone or a second
+laptop — the way you watch them work on one screen and chat from another — bind
+both servers to all interfaces instead of just localhost:
+
+```bash
+# Backend — on the server machine:
+uvicorn main:app --host 0.0.0.0 --port 8000
+
+# Frontend — on the server machine:
+npm run dev -- --host
+```
+
+Find the server's LAN address (`ipconfig getifaddr en0` on macOS, `hostname -I`
+on Linux), then from any device on the same Wi-Fi open:
+
+```
+http://<server-ip>:5173
+```
+
+The UI automatically targets the backend at that **same host** on port 8000 — no
+rebuild, no editing code. The agents run on the server machine (you'll see their
+work in that terminal); you drive and approve from whatever device you opened.
+
+**From outside your home network**, put the server on a private mesh like
+[Tailscale](https://tailscale.com) (every device gets a stable IP) and use that
+IP above, or expose port 8000 with a tunnel (`cloudflared` / `ngrok`) and point
+the UI at it once with `?backend=`:
+
+```
+http://<frontend-url>/?backend=your-tunnel-host.example.com
+```
+
+That address is remembered for next time. HTTPS pages automatically use secure
+`wss://` sockets. Because anyone who can reach the backend can drive your
+build-crew agents, only expose it over a trusted network (Tailscale) or behind
+auth — not the raw public internet.
+
 ## How the approval gate works
 
 1. You brief an agent in plain English ("add a `PATCH /api/clients/:id` handler").
