@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Boxes, Send, ChevronLeft, Check, X, AlertTriangle, Terminal, FileEdit, Eye,
-  FolderGit2, Hammer, ClipboardList, GraduationCap, ShieldQuestion, Circle, Trash2,
+  FolderGit2, Hammer, ClipboardList, GraduationCap, ShieldQuestion, Circle, Trash2, Gauge,
 } from "lucide-react";
+
+const fmtCost = (c) => "$" + ((c || 0) < 1 ? (c || 0).toFixed(4) : (c || 0).toFixed(2));
 
 // Resolve the backend address so the UI works across machines without a rebuild.
 // Priority:
@@ -72,6 +74,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [working, setWorking] = useState({});        // agentId -> currently running
   const [approvals, setApprovals] = useState({});    // agentId -> { id, tool, input }
+  const [usage, setUsage] = useState({ agents: {}, total: { cost: 0, input: 0, output: 0, turns: 0 } });
 
   const wsRef = useRef(null);
   const appendRef = useRef({});                      // agentId -> append streaming text?
@@ -88,7 +91,17 @@ export default function App() {
     fetch(`${API}/api/config`).then((r) => r.json()).then(setConfig).catch(() => {});
     fetch(`${API}/api/agents`).then((r) => r.json()).then(setAgents).catch(() => {});
     fetch(`${API}/api/history`).then((r) => r.json()).then((h) => setThreads(h || {})).catch(() => {});
+    fetch(`${API}/api/usage`).then((r) => r.json()).then(setUsage).catch(() => {});
   }, []);
+
+  const addUsage = (id, cost, input, output) =>
+    setUsage((u) => {
+      const a = u.agents[id] || { cost: 0, input: 0, output: 0, turns: 0 };
+      return {
+        agents: { ...u.agents, [id]: { cost: a.cost + cost, input: a.input + input, output: a.output + output, turns: a.turns + 1 } },
+        total: { cost: u.total.cost + cost, input: u.total.input + input, output: u.total.output + output, turns: u.total.turns + 1 },
+      };
+    });
 
   useEffect(() => {
     let alive = true;
@@ -109,7 +122,7 @@ export default function App() {
         if (m.type === "cleared") { appendRef.current[id] = false; return setThreads((t) => ({ ...t, [id]: [] })); }
         if (m.type === "start") { appendRef.current[id] = false; return setWorkingFor(id, true); }
         if (m.type === "end") { appendRef.current[id] = false; return setWorkingFor(id, false); }
-        if (m.type === "result") return;
+        if (m.type === "result") { if (typeof m.cost === "number") addUsage(id, m.cost, m.input || 0, m.output || 0); return; }
         if (m.type === "text") return pushText(id, m.text);
         if (m.type === "tool") { appendRef.current[id] = false; return pushItem(id, { kind: "tool", tool: m.tool, input: m.input }); }
         if (m.type === "error") { appendRef.current[id] = false; setWorkingFor(id, false); return pushItem(id, { kind: "error", text: m.text }); }
@@ -194,6 +207,11 @@ export default function App() {
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div title={`${usage.total.turns} turns · ${(usage.total.input + usage.total.output).toLocaleString()} tokens · estimated API cost`}
+            style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Gauge size={13} color={C.muted} />
+            <Eyebrow color={C.muted}>{fmtCost(usage.total.cost)}</Eyebrow>
+          </div>
           {(busyCount > 0 || approvalCount > 0) && (
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {busyCount > 0 && (
@@ -285,6 +303,11 @@ export default function App() {
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <Eyebrow color={accent(selected.cluster)}>{selected.code} · {selected.model} · {selected.policy === "build" ? "local tools" : "advisor"}</Eyebrow>
                   <div style={{ fontSize: 14.5, fontWeight: 700, lineHeight: 1.15 }}>{selected.name}</div>
+                </div>
+                <div title={`${selected.name}: ${usage.agents[selectedId]?.turns || 0} turns · ${((usage.agents[selectedId]?.input || 0) + (usage.agents[selectedId]?.output || 0)).toLocaleString()} tokens`}
+                  style={{ display: "flex", alignItems: "center", gap: 6, marginRight: 2, flexShrink: 0 }}>
+                  <Gauge size={13} color={C.faint} />
+                  <Eyebrow color={C.muted}>{fmtCost(usage.agents[selectedId]?.cost || 0)}</Eyebrow>
                 </div>
                 {items.length > 0 && (
                   <button title="Clear saved history & reset this agent's memory"

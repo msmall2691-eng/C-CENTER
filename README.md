@@ -110,6 +110,37 @@ That address is remembered for next time. HTTPS pages automatically use secure
 build-crew agents, only expose it over a trusted network (Tailscale) or behind
 auth — not the raw public internet.
 
+## Always-on (run it as a service)
+
+To keep Command Center running after you close the terminal — and restart it on
+crash or reboot — install it as a service. When the UI has been built, the
+backend serves it too, so a **single process on port 8000** is the whole app.
+
+```bash
+deploy/install-systemd.sh             # Linux + systemd: build UI, install, start
+deploy/install-systemd.sh uninstall   # remove it
+```
+
+It runs as a `systemctl --user` service (no root), enables linger so it survives
+logout/reboot, and prints the status/logs commands. Then expose it privately:
+
+```bash
+deploy/tailscale-serve.sh             # publish :8000 over Tailscale HTTPS
+deploy/tailscale-serve.sh off         # stop publishing
+```
+
+That gives you a `https://<machine>.ts.net` URL reachable from your phone. See
+`deploy/command-center.service.example` for the unit if you'd rather wire it by
+hand. (`DEPLOY.md` covers the cloud route — Vercel + Railway — instead.)
+
+## Cost: the usage meter
+
+Every agent turn reports its real token usage and dollar cost (from the SDK), and
+the totals are saved to `backend/history.db`. The header shows your **cumulative
+API cost**; each agent's view shows its own. `GET /api/usage` returns the raw
+numbers. Cheaper models keep it down — see *Per-agent models* below, or set
+`AGENT_MODEL=haiku` to force everything to the cheapest tier.
+
 ## How the approval gate works
 
 1. You brief an agent in plain English ("add a `PATCH /api/clients/:id` handler").

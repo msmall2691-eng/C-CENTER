@@ -1,0 +1,22 @@
+# Reference systemd unit. `deploy/install-systemd.sh` generates the real one with
+# your actual paths at ~/.config/systemd/user/command-center.service — prefer the
+# script. To install by hand: replace <REPO> and <UVICORN>, drop this into that
+# path, then: systemctl --user daemon-reload && systemctl --user enable --now command-center
+
+[Unit]
+Description=Command Center (agents backend + UI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=<REPO>/backend
+# PATH must include node (the Agent SDK runtime). Copy your shell's $PATH here.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=PORT=8000
+ExecStart=<UVICORN> main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

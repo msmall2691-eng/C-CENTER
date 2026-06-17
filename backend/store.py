@@ -35,6 +35,18 @@ _conn.execute(
     )"""
 )
 _conn.execute("CREATE INDEX IF NOT EXISTS idx_agent ON messages(agent_id, id)")
+_conn.execute(
+    """CREATE TABLE IF NOT EXISTS usage (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts            TEXT NOT NULL,
+        agent_id      TEXT NOT NULL,
+        model         TEXT,
+        input_tokens  INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        cost_usd      REAL DEFAULT 0
+    )"""
+)
+_conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_agent ON usage(agent_id)")
 _conn.commit()
 
 
@@ -78,7 +90,40 @@ def all_threads(limit_per=1000):
 
 
 def clear(agent_id):
-    """Wipe one agent's saved thread."""
+    """Wipe one agent's saved thread (history only; usage is kept)."""
     with _lock:
         _conn.execute("DELETE FROM messages WHERE agent_id=?", (agent_id,))
         _conn.commit()
+
+
+def record_usage(agent_id, model, input_tokens, output_tokens, cost_usd):
+    """Append one turn's token + cost usage (cost from the SDK's total_cost_usd)."""
+    with _lock:
+        _conn.execute(
+            "INSERT INTO usage(ts, agent_id, model, input_tokens, output_tokens, cost_usd) "
+            "VALUES (?,?,?,?,?,?)",
+            (time.strftime("%Y-%m-%dT%H:%M:%S"), agent_id, model,
+             int(input_tokens or 0), int(output_tokens or 0), float(cost_usd or 0.0)),
+        )
+        _conn.commit()
+
+
+def usage_summary():
+    """{total, agents} — cumulative turns, tokens, and USD cost, per agent + overall."""
+    with _lock:
+        rows = _conn.execute(
+            "SELECT agent_id, COUNT(*), SUM(input_tokens), SUM(output_tokens), SUM(cost_usd) "
+            "FROM usage GROUP BY agent_id"
+        ).fetchall()
+        tot = _conn.execute(
+            "SELECT COUNT(*), SUM(input_tokens), SUM(output_tokens), SUM(cost_usd) FROM usage"
+        ).fetchone()
+    agents = {
+        aid: {"turns": turns, "input": inp or 0, "output": out or 0, "cost": cost or 0.0}
+        for (aid, turns, inp, out, cost) in rows
+    }
+    return {
+        "agents": agents,
+        "total": {"turns": tot[0] or 0, "input": tot[1] or 0,
+                  "output": tot[2] or 0, "cost": tot[3] or 0.0},
+    }

@@ -98,6 +98,12 @@ def get_history():
     return store.all_threads()
 
 
+@app.get("/api/usage")
+def get_usage():
+    """Cumulative token + USD cost per agent and overall (the usage meter)."""
+    return store.usage_summary()
+
+
 @app.delete("/api/history/{agent_id}")
 def delete_history(agent_id: str):
     store.clear(agent_id)
@@ -149,6 +155,9 @@ async def ws_endpoint(ws: WebSocket):
 
     async def store_add(*a, **k):
         await asyncio.to_thread(store.add, *a, **k)
+
+    async def store_usage(*a, **k):
+        await asyncio.to_thread(store.record_usage, *a, **k)
 
     def lock_for(agent_id: str) -> asyncio.Lock:
         return agent_locks.setdefault(agent_id, asyncio.Lock())
@@ -217,7 +226,14 @@ async def ws_endpoint(ws: WebSocket):
                     await send({"type": "tool", "agent_id": agent["id"], "tool": tool, "input": summary})
                     log(agent, "⚙", tool_log_label(tool, summary))
         if type(msg).__name__ == "ResultMessage":
-            await send({"type": "result", "agent_id": agent["id"]})
+            usage = getattr(msg, "usage", None) or {}
+            cost = float(getattr(msg, "total_cost_usd", None) or 0.0)
+            inp = int(usage.get("input_tokens", 0) or 0)
+            out = int(usage.get("output_tokens", 0) or 0)
+            await store_usage(agent["id"], model_for(agent), inp, out, cost)
+            log(agent, "$", f"{model_for(agent)} · {inp + out} tok · ${cost:.4f}")
+            await send({"type": "result", "agent_id": agent["id"],
+                        "cost": cost, "input": inp, "output": out})
 
     async def run_turn(agent, text):
         """One full turn for one agent. Serialized per agent, concurrent across agents."""
