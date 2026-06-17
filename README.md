@@ -57,6 +57,19 @@ npm run dev
 Open **http://localhost:5173**. The dot in the top right turns green when it's
 talking to the backend.
 
+## Quick start (both servers, one command)
+
+Once the one-time setup above is done (deps installed, `backend/.env` filled in),
+you don't need two terminals. From the project root:
+
+```bash
+./start.sh
+```
+
+It launches the backend (`:8000`) and frontend (`:5173`) together, both bound to
+`0.0.0.0` so other devices can reach them, prints your phone URL if Tailscale is
+running, and stops both cleanly when you press **Ctrl+C**.
+
 ## Run it across your network (drive agents from another device)
 
 The setup above is single-machine. To run the agents on one computer (a spare
