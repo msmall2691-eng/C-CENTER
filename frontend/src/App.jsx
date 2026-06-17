@@ -70,15 +70,17 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [threads, setThreads] = useState({});        // agentId -> [items]
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [approval, setApproval] = useState(null);    // { id, tool, input }
+  const [working, setWorking] = useState({});        // agentId -> currently running
+  const [approvals, setApprovals] = useState({});    // agentId -> { id, tool, input }
 
   const wsRef = useRef(null);
-  const selRef = useRef(null);
-  const appendRef = useRef(false);
+  const appendRef = useRef({});                      // agentId -> append streaming text?
   const scrollRef = useRef(null);
 
-  selRef.current = selectedId;
+  const setWorkingFor = (id, val) => setWorking((w) => ({ ...w, [id]: val }));
+  const statusOf = (id) => (approvals[id] ? "approval" : working[id] ? "working" : "idle");
+  const busyCount = Object.values(working).filter(Boolean).length;
+  const approvalCount = Object.keys(approvals).length;
   const selected = agents.find((a) => a.id === selectedId) || null;
   const items = selectedId ? (threads[selectedId] || []) : [];
 
@@ -98,16 +100,17 @@ export default function App() {
       socket.onclose = () => { if (alive) { setConn("closed"); setTimeout(connect, 1500); } };
       socket.onerror = () => socket.close();
       socket.onmessage = (e) => {
-        const id = selRef.current;
-        if (!id) return;
         const m = JSON.parse(e.data);
-        if (m.type === "start") { appendRef.current = false; setStreaming(true); return; }
-        if (m.type === "end") { setStreaming(false); appendRef.current = false; return; }
-        if (m.type === "result") { return; }
+        const id = m.agent_id;
+        if (m.type === "approval_request")
+          return setApprovals((a) => ({ ...a, [id]: { id: m.id, tool: m.tool, input: m.input } }));
+        if (!id) return;
+        if (m.type === "start") { appendRef.current[id] = false; return setWorkingFor(id, true); }
+        if (m.type === "end") { appendRef.current[id] = false; return setWorkingFor(id, false); }
+        if (m.type === "result") return;
         if (m.type === "text") return pushText(id, m.text);
-        if (m.type === "tool") { appendRef.current = false; return pushItem(id, { kind: "tool", tool: m.tool, input: m.input }); }
-        if (m.type === "approval_request") return setApproval({ id: m.id, tool: m.tool, input: m.input });
-        if (m.type === "error") { setStreaming(false); appendRef.current = false; return pushItem(id, { kind: "error", text: m.text }); }
+        if (m.type === "tool") { appendRef.current[id] = false; return pushItem(id, { kind: "tool", tool: m.tool, input: m.input }); }
+        if (m.type === "error") { appendRef.current[id] = false; setWorkingFor(id, false); return pushItem(id, { kind: "error", text: m.text }); }
       };
     };
     connect();
@@ -116,7 +119,7 @@ export default function App() {
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [items, streaming, approval]);
+  }, [items, working, approvals]);
 
   const pushItem = (id, item) =>
     setThreads((t) => ({ ...t, [id]: [...(t[id] || []), item] }));
@@ -125,27 +128,28 @@ export default function App() {
     setThreads((t) => {
       const arr = [...(t[id] || [])];
       const last = arr[arr.length - 1];
-      if (appendRef.current && last && last.kind === "agent") {
+      if (appendRef.current[id] && last && last.kind === "agent") {
         arr[arr.length - 1] = { ...last, text: last.text + text };
       } else {
         arr.push({ kind: "agent", text });
-        appendRef.current = true;
+        appendRef.current[id] = true;
       }
       return { ...t, [id]: arr };
     });
 
   const send = () => {
     const text = input.trim();
-    if (!text || !selected || conn !== "open" || streaming) return;
+    if (!text || !selected || conn !== "open" || working[selectedId]) return;
     pushItem(selectedId, { kind: "user", text });
     wsRef.current.send(JSON.stringify({ type: "message", agent_id: selectedId, text }));
     setInput("");
   };
 
-  const decide = (approved) => {
-    if (!approval) return;
-    wsRef.current.send(JSON.stringify({ type: "approval", id: approval.id, approved }));
-    setApproval(null);
+  const decide = (agentId, approved) => {
+    const ap = approvals[agentId];
+    if (!ap) return;
+    wsRef.current.send(JSON.stringify({ type: "approval", id: ap.id, approved }));
+    setApprovals((a) => { const n = { ...a }; delete n[agentId]; return n; });
   };
 
   const byCluster = (c) => agents.filter((a) => a.cluster === c);
@@ -157,6 +161,7 @@ export default function App() {
         .scroll::-webkit-scrollbar { width: 8px; }
         .scroll::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 8px; }
         .tk:hover { border-color: ${C.borderHi} !important; }
+        @keyframes ccpulse { 0%,100%{opacity:1} 50%{opacity:.25} }
         @media (max-width: 820px){ .rail.hide{display:none} .main.hide{display:none} }
         @media (min-width: 821px){ .rail{display:flex !important} .main{display:flex !important} }
       `}</style>
@@ -179,10 +184,28 @@ export default function App() {
             </div>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span style={{ width: 8, height: 8, borderRadius: 999,
-            background: conn === "open" ? C.ok : conn === "connecting" ? "#D0A24E" : C.danger }} />
-          <Eyebrow>{conn === "open" ? "connected" : conn}</Eyebrow>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {(busyCount > 0 || approvalCount > 0) && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {busyCount > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: C.ok, animation: "ccpulse 1.4s ease-in-out infinite" }} />
+                  <Eyebrow color={C.muted}>{busyCount} working</Eyebrow>
+                </div>
+              )}
+              {approvalCount > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: "#D0A24E", animation: "ccpulse 1.4s ease-in-out infinite" }} />
+                  <Eyebrow color="#D0A24E">{approvalCount} waiting</Eyebrow>
+                </div>
+              )}
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999,
+              background: conn === "open" ? C.ok : conn === "connecting" ? "#D0A24E" : C.danger }} />
+            <Eyebrow>{conn === "open" ? "connected" : conn}</Eyebrow>
+          </div>
         </div>
       </header>
 
@@ -212,16 +235,17 @@ export default function App() {
                           background: on ? C.raisedHi : C.raised, border: `1px solid ${on ? C.borderHi : C.border}`,
                           borderRadius: 10, overflow: "hidden", cursor: "pointer" }}>
                         <span style={{ width: 3, background: meta.color }} />
-                        <span style={{ display: "flex", gap: 11, alignItems: "flex-start", padding: "11px 12px", minWidth: 0 }}>
+                        <span style={{ display: "flex", gap: 11, alignItems: "flex-start", padding: "11px 12px", minWidth: 0, flex: 1 }}>
                           <span style={{ display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: 8,
                             background: C.panel, border: `1px solid ${C.border}`, marginTop: 1, flexShrink: 0 }}>
                             <Ic size={15} color={meta.color} />
                           </span>
-                          <span style={{ minWidth: 0 }}>
+                          <span style={{ minWidth: 0, flex: 1 }}>
                             <Eyebrow color={meta.color} style={{ marginBottom: 3 }}>{a.code}</Eyebrow>
                             <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.25 }}>{a.name}</div>
                             <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.35, marginTop: 2 }}>{a.role}</div>
                           </span>
+                          <StatusDot status={statusOf(a.id)} />
                         </span>
                       </button>
                     );
@@ -269,9 +293,11 @@ export default function App() {
 
                 {items.map((it, i) => <Item key={i} it={it} cluster={selected.cluster} />)}
 
-                {approval && <ApprovalCard approval={approval} onDecide={decide} />}
+                {approvals[selectedId] && (
+                  <ApprovalCard approval={approvals[selectedId]} onDecide={(ok) => decide(selectedId, ok)} />
+                )}
 
-                {streaming && !approval && (
+                {working[selectedId] && !approvals[selectedId] && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.muted, fontSize: 12.5, paddingLeft: 2 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 999, background: accent(selected.cluster) }} />
                     <span style={{ fontFamily: MONO }}>working…</span>
@@ -283,14 +309,15 @@ export default function App() {
                 <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
                   <textarea value={input} onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-                    rows={1} placeholder={conn === "open" ? `Brief ${selected.name}…` : "Connecting to backend…"}
+                    rows={1} placeholder={conn !== "open" ? "Connecting to backend…"
+                      : working[selectedId] ? `${selected.name} is working…` : `Brief ${selected.name}…`}
                     style={{ flex: 1, resize: "none", maxHeight: 160, minHeight: 44, padding: "12px 14px", borderRadius: 11,
                       border: `1px solid ${C.border}`, background: C.raised, color: C.text, fontSize: 14, lineHeight: 1.4, fontFamily: SANS }} />
-                  <button onClick={send} disabled={!input.trim() || conn !== "open" || streaming}
+                  <button onClick={send} disabled={!input.trim() || conn !== "open" || working[selectedId]}
                     style={{ display: "grid", placeItems: "center", width: 44, height: 44, borderRadius: 11, border: "none",
-                      background: input.trim() && conn === "open" && !streaming ? accent(selected.cluster) : C.raised,
-                      color: input.trim() && conn === "open" && !streaming ? C.bg : C.faint,
-                      cursor: input.trim() && conn === "open" && !streaming ? "pointer" : "default" }}>
+                      background: input.trim() && conn === "open" && !working[selectedId] ? accent(selected.cluster) : C.raised,
+                      color: input.trim() && conn === "open" && !working[selectedId] ? C.bg : C.faint,
+                      cursor: input.trim() && conn === "open" && !working[selectedId] ? "pointer" : "default" }}>
                     <Send size={17} />
                   </button>
                 </div>
@@ -305,6 +332,17 @@ export default function App() {
         </main>
       </div>
     </div>
+  );
+}
+
+function StatusDot({ status }) {
+  if (status === "idle") return null;
+  const isApproval = status === "approval";
+  const color = isApproval ? "#D0A24E" : C.ok;
+  return (
+    <span title={isApproval ? "waiting for your approval" : "working"}
+      style={{ alignSelf: "center", flexShrink: 0, width: 9, height: 9, borderRadius: 999,
+        background: color, boxShadow: `0 0 0 3px ${color}22`, animation: "ccpulse 1.4s ease-in-out infinite" }} />
   );
 }
 
