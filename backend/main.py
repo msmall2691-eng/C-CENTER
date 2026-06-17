@@ -32,8 +32,12 @@ import store
 load_dotenv()
 
 WORKSPACE = os.environ.get("WORKSPACE_DIR") or str(Path.home())
-MODEL = os.environ.get("AGENT_MODEL", "sonnet")
+MODEL_OVERRIDE = os.environ.get("AGENT_MODEL")  # if set, forces every agent to this model
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+
+def model_for(agent: dict) -> str:
+    return MODEL_OVERRIDE or agent.get("model") or "sonnet"
 
 # Tools that never need approval — read-only / inspection only.
 SAFE_TOOLS = {"Read", "Glob", "Grep", "WebSearch", "WebFetch", "TodoWrite", "NotebookRead"}
@@ -65,7 +69,7 @@ def log(agent: dict, icon: str, msg: str) -> None:
 def banner() -> None:
     print("\n\033[1mCommand Center\033[0m — agents online, watching this terminal", flush=True)
     print(f"  workspace : {WORKSPACE}", flush=True)
-    print(f"  model     : {MODEL}", flush=True)
+    print(f"  model     : {MODEL_OVERRIDE or 'per-agent (see roster.py)'}", flush=True)
     print(f"  api key   : {'set' if API_KEY else 'MISSING — set ANTHROPIC_API_KEY in backend/.env'}", flush=True)
     print(f"  roster    : {len(AGENTS)} agents ({sum(a['policy']=='build' for a in AGENTS)} build, "
           f"{sum(a['policy']!='build' for a in AGENTS)} advisor)\n", flush=True)
@@ -78,12 +82,12 @@ async def _startup():
 
 @app.get("/api/config")
 def get_config():
-    return {"workspace": WORKSPACE, "model": MODEL, "has_key": bool(API_KEY)}
+    return {"workspace": WORKSPACE, "model": MODEL_OVERRIDE or "per-agent", "has_key": bool(API_KEY)}
 
 
 @app.get("/api/agents")
 def get_agents():
-    keys = ("id", "code", "cluster", "name", "role", "policy")
+    keys = ("id", "code", "cluster", "name", "role", "policy", "model")
     return [{k: a[k] for k in keys} for a in AGENTS]
 
 
@@ -188,7 +192,7 @@ async def ws_endpoint(ws: WebSocket):
             permission_mode="default",
             can_use_tool=can_use_tool_for(agent),
             cwd=WORKSPACE,
-            model=MODEL,
+            model=model_for(agent),
             env={"ANTHROPIC_API_KEY": API_KEY} if API_KEY else {},
         )
         client = ClaudeSDKClient(options=opts)
@@ -229,7 +233,7 @@ async def ws_endpoint(ws: WebSocket):
                 if client is None:
                     client = await build_client(agent)
                     clients[agent["id"]] = client
-                    log(agent, "\033[32m●\033[0m", "session started")
+                    log(agent, "\033[32m●\033[0m", f"session started · {model_for(agent)}")
                 await send({"type": "start", "agent_id": agent["id"]})
                 log(agent, "▸", text.strip())
                 await client.query(text)

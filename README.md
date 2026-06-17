@@ -128,6 +128,22 @@ Everything lives in `backend/roster.py`. Each agent is one entry:
 The shared context and per-cluster rules are appended automatically. Restart the
 backend to pick up changes.
 
+### Per-agent models (cost control)
+
+Each agent runs on its own model, set in the `MODELS` map at the top of
+`backend/roster.py`. Cheaper models handle simple drafting; stronger ones are
+reserved for code and heavy reasoning:
+
+- `"opus"` — most capable, priciest (~$5 / $15 per 1M tokens in:out)
+- `"sonnet"` — balanced (~$3 / $15)
+- `"haiku"` — cheapest and fastest (~$1 / $5)
+
+The defaults are 2 Opus (the two main builders), 5 Sonnet, and 8 Haiku
+(advisors). Edit any agent's model in that map. Set `AGENT_MODEL` in `.env` to
+force **every** agent onto one model — a quick cost lockdown. Each agent's model
+shows in the UI (next to its code) and in the backend terminal when its session
+starts.
+
 ## Adding live connectors (optional, later)
 
 The SDK takes MCP servers the same way the artifact did. In `backend/main.py`,
@@ -137,8 +153,10 @@ read your Supabase or Gmail alongside the local filesystem.
 
 ## Notes
 
-- Model is set by `AGENT_MODEL` in `.env` (`sonnet`, `opus`, `haiku`, or a full id).
-- The backend keeps one live session per agent so context carries across turns;
-  switching agents starts a fresh session.
+- Models are per-agent (see *Per-agent models* above); `AGENT_MODEL` in `.env`
+  overrides all of them at once.
+- Agents run concurrently — each keeps its own live session, so several can work
+  at the same time and context carries across turns. Every brief, reply, tool
+  call, and approval is saved to `backend/history.db` and reloaded on open.
 - This is yours to run and maintain — unlike Claude Code, which Anthropic keeps
   updated. Keep `claude-agent-sdk` current with `pip install -U claude-agent-sdk`.

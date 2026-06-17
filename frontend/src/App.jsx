@@ -250,7 +250,7 @@ export default function App() {
                             <Ic size={15} color={meta.color} />
                           </span>
                           <span style={{ minWidth: 0, flex: 1 }}>
-                            <Eyebrow color={meta.color} style={{ marginBottom: 3 }}>{a.code}</Eyebrow>
+                            <Eyebrow color={meta.color} style={{ marginBottom: 3 }}>{a.code}{a.model ? ` · ${a.model}` : ""}</Eyebrow>
                             <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.25 }}>{a.name}</div>
                             <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.35, marginTop: 2 }}>{a.role}</div>
                           </span>
@@ -283,7 +283,7 @@ export default function App() {
                   <ChevronLeft size={16} />
                 </button>
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <Eyebrow color={accent(selected.cluster)}>{selected.code} · {selected.policy === "build" ? "local tools" : "advisor"}</Eyebrow>
+                  <Eyebrow color={accent(selected.cluster)}>{selected.code} · {selected.model} · {selected.policy === "build" ? "local tools" : "advisor"}</Eyebrow>
                   <div style={{ fontSize: 14.5, fontWeight: 700, lineHeight: 1.15 }}>{selected.name}</div>
                 </div>
                 {items.length > 0 && (

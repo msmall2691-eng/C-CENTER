@@ -37,6 +37,35 @@ CHAT_RULE = (
     "Megan to act on herself. Never assume anything was sent, paid, or executed."
 )
 
+# Per-agent model — keep cost efficient by running simple drafting/advisor work
+# on cheaper models and reserving stronger ones for code and heavy reasoning.
+#   "opus"   — most capable, priciest  ($5 / $15 per 1M tokens in:out)
+#   "sonnet" — balanced                ($3 / $15)
+#   "haiku"  — cheapest, fast          ($1 / $5)
+# Edit any agent's model here. Set AGENT_MODEL in .env to force ALL agents to one
+# model (a quick cost lockdown). Anything not listed falls back to DEFAULT_MODEL.
+DEFAULT_MODEL = "sonnet"
+MODELS = {
+    # Build Crew — write & edit real code, correctness matters most
+    "bld01": "opus",     # Full-Stack Builder   (hardest, most code)
+    "bld02": "opus",     # Debug & Integration  (deep reasoning)
+    "bld03": "sonnet",   # Security & Roles
+    "bld04": "sonnet",   # DB & Deploy
+    "bld05": "sonnet",   # Auth & API Manager
+    # Field Crew — short drafts from clear inputs → cheapest model is plenty
+    "fld01": "haiku",    # Dispatch Briefing
+    "fld02": "haiku",    # Lead Intake
+    "fld03": "haiku",    # Quote Follow-Up
+    "fld04": "haiku",    # Invoice Reminders
+    "fld05": "haiku",    # Weekly Ops Report
+    # School Crew — reasoning-heavy tutoring on sonnet, simple tools on haiku
+    "sch01": "sonnet",   # Econ Tutor
+    "sch02": "sonnet",   # Linguistics Tutor
+    "sch03": "haiku",    # Study Guide Builder
+    "sch04": "haiku",    # Discussion Drafter
+    "sch05": "haiku",    # Quiz Me
+}
+
 # (id, code, cluster, name, role, policy, prompt_body)
 _DEFS = [
     # ---------- BUILD CREW (real local tools) ----------
@@ -145,6 +174,7 @@ AGENTS = [
     {
         "id": id, "code": code, "cluster": cluster, "name": name,
         "role": role, "policy": policy,
+        "model": MODELS.get(id, DEFAULT_MODEL),
         "system_prompt": _assemble(cluster, policy, body),
     }
     for (id, code, cluster, name, role, policy, body) in _DEFS
