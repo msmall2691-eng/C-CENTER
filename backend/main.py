@@ -22,6 +22,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
@@ -314,6 +315,15 @@ async def ws_endpoint(ws: WebSocket):
                 pass
 
 
-@app.get("/")
-def root():
+@app.get("/api/health")
+def health():
     return {"ok": True, "agents": len(AGENTS), "workspace": WORKSPACE}
+
+
+# Serve the built frontend (frontend/dist) from the backend when it exists, so a
+# single always-on process serves both the UI and the API on one port. In dev you
+# can still use the Vite server on :5173 (run ./start.sh); this mount is a no-op
+# until you `npm run build`. Mounted last so /api/* and /ws match first.
+_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="ui")
