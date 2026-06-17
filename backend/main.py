@@ -27,6 +27,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
 
 from roster import AGENTS, AGENTS_BY_ID
+import store
 
 load_dotenv()
 
@@ -86,6 +87,18 @@ def get_agents():
     return [{k: a[k] for k in keys} for a in AGENTS]
 
 
+@app.get("/api/history")
+def get_history():
+    """Every agent's saved thread, so the UI can restore it on open."""
+    return store.all_threads()
+
+
+@app.delete("/api/history/{agent_id}")
+def delete_history(agent_id: str):
+    store.clear(agent_id)
+    return {"ok": True, "agent_id": agent_id}
+
+
 def summarize_input(tool: str, inp: dict) -> dict:
     """Pull the human-relevant bits out of a tool call for the approval card."""
     inp = inp or {}
@@ -128,6 +141,9 @@ async def ws_endpoint(ws: WebSocket):
     async def send(obj):
         async with send_lock:
             await ws.send_json(obj)
+
+    async def store_add(*a, **k):
+        await asyncio.to_thread(store.add, *a, **k)
 
     def lock_for(agent_id: str) -> asyncio.Lock:
         return agent_locks.setdefault(agent_id, asyncio.Lock())
@@ -179,17 +195,20 @@ async def ws_endpoint(ws: WebSocket):
         await client.connect()
         return client
 
-    async def stream_message(agent, msg):
+    async def stream_message(agent, msg, buf, flush):
         content = getattr(msg, "content", None)
         if isinstance(content, list):
             for block in content:
                 name = type(block).__name__
                 if name == "TextBlock" and getattr(block, "text", ""):
+                    buf.append(block.text)
                     await send({"type": "text", "agent_id": agent["id"], "text": block.text})
                     log(agent, "\033[90m·\033[0m", block.text.strip())
                 elif name == "ToolUseBlock":
+                    await flush()  # persist agent text before the tool, mirroring the UI
                     tool = getattr(block, "name", "")
                     summary = summarize_input(tool, getattr(block, "input", {}) or {})
+                    await store_add(agent["id"], "tool", tool=tool, inp=summary)
                     await send({"type": "tool", "agent_id": agent["id"], "tool": tool, "input": summary})
                     log(agent, "⚙", tool_log_label(tool, summary))
         if type(msg).__name__ == "ResultMessage":
@@ -198,6 +217,13 @@ async def ws_endpoint(ws: WebSocket):
     async def run_turn(agent, text):
         """One full turn for one agent. Serialized per agent, concurrent across agents."""
         async with lock_for(agent["id"]):
+            buf: list[str] = []
+
+            async def flush():
+                if buf:
+                    await store_add(agent["id"], "agent", text="".join(buf))
+                    buf.clear()
+
             try:
                 client = clients.get(agent["id"])
                 if client is None:
@@ -208,9 +234,12 @@ async def ws_endpoint(ws: WebSocket):
                 log(agent, "▸", text.strip())
                 await client.query(text)
                 async for msg in client.receive_response():
-                    await stream_message(agent, msg)
+                    await stream_message(agent, msg, buf, flush)
+                await flush()
                 await send({"type": "end", "agent_id": agent["id"]})
             except Exception as e:
+                await flush()
+                await store_add(agent["id"], "error", text=str(e))
                 log(agent, "\033[31m✗\033[0m", f"error — {e}")
                 await send({"type": "error", "agent_id": agent["id"], "text": str(e)})
                 await send({"type": "end", "agent_id": agent["id"]})
@@ -238,6 +267,18 @@ async def ws_endpoint(ws: WebSocket):
                     fut.set_result(bool(data.get("approved")))
                 continue
 
+            if kind == "clear":
+                aid = data.get("agent_id")
+                bad = clients.pop(aid, None)        # forget the live session…
+                if bad:
+                    try:
+                        await bad.disconnect()
+                    except Exception:
+                        pass
+                await asyncio.to_thread(store.clear, aid)   # …and the saved thread
+                await send({"type": "cleared", "agent_id": aid})
+                continue
+
             if kind != "message":
                 continue
 
@@ -245,9 +286,13 @@ async def ws_endpoint(ws: WebSocket):
             if not agent:
                 await send({"type": "error", "agent_id": data.get("agent_id"), "text": "Unknown agent."})
                 continue
+
+            await store_add(agent["id"], "user", text=data.get("text", ""))  # remember the brief
+
             if not API_KEY:
-                await send({"type": "error", "agent_id": agent["id"],
-                            "text": "No ANTHROPIC_API_KEY found. Add it to backend/.env and restart."})
+                msg = "No ANTHROPIC_API_KEY found. Add it to backend/.env and restart."
+                await store_add(agent["id"], "error", text=msg)
+                await send({"type": "error", "agent_id": agent["id"], "text": msg})
                 await send({"type": "end", "agent_id": agent["id"]})
                 continue
 

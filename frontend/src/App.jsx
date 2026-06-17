@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Boxes, Send, ChevronLeft, Check, X, AlertTriangle, Terminal, FileEdit, Eye,
-  FolderGit2, Hammer, ClipboardList, GraduationCap, ShieldQuestion, Circle,
+  FolderGit2, Hammer, ClipboardList, GraduationCap, ShieldQuestion, Circle, Trash2,
 } from "lucide-react";
 
 // Resolve the backend address so the UI works across machines without a rebuild.
@@ -87,6 +87,7 @@ export default function App() {
   useEffect(() => {
     fetch(`${API}/api/config`).then((r) => r.json()).then(setConfig).catch(() => {});
     fetch(`${API}/api/agents`).then((r) => r.json()).then(setAgents).catch(() => {});
+    fetch(`${API}/api/history`).then((r) => r.json()).then((h) => setThreads(h || {})).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -105,6 +106,7 @@ export default function App() {
         if (m.type === "approval_request")
           return setApprovals((a) => ({ ...a, [id]: { id: m.id, tool: m.tool, input: m.input } }));
         if (!id) return;
+        if (m.type === "cleared") { appendRef.current[id] = false; return setThreads((t) => ({ ...t, [id]: [] })); }
         if (m.type === "start") { appendRef.current[id] = false; return setWorkingFor(id, true); }
         if (m.type === "end") { appendRef.current[id] = false; return setWorkingFor(id, false); }
         if (m.type === "result") return;
@@ -149,6 +151,13 @@ export default function App() {
     const ap = approvals[agentId];
     if (!ap) return;
     wsRef.current.send(JSON.stringify({ type: "approval", id: ap.id, approved }));
+    setApprovals((a) => { const n = { ...a }; delete n[agentId]; return n; });
+  };
+
+  const clearThread = (agentId) => {
+    if (!agentId || conn !== "open") return;
+    wsRef.current.send(JSON.stringify({ type: "clear", agent_id: agentId }));
+    setThreads((t) => ({ ...t, [agentId]: [] }));
     setApprovals((a) => { const n = { ...a }; delete n[agentId]; return n; });
   };
 
@@ -273,10 +282,18 @@ export default function App() {
                     border: `1px solid ${C.border}`, background: C.raised, color: C.muted, cursor: "pointer" }}>
                   <ChevronLeft size={16} />
                 </button>
-                <div style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
                   <Eyebrow color={accent(selected.cluster)}>{selected.code} · {selected.policy === "build" ? "local tools" : "advisor"}</Eyebrow>
                   <div style={{ fontSize: 14.5, fontWeight: 700, lineHeight: 1.15 }}>{selected.name}</div>
                 </div>
+                {items.length > 0 && (
+                  <button title="Clear saved history & reset this agent's memory"
+                    onClick={() => { if (window.confirm(`Clear ${selected.name}'s saved history and reset its memory? This can't be undone.`)) clearThread(selected.id); }}
+                    style={{ display: "grid", placeItems: "center", width: 32, height: 32, borderRadius: 8,
+                      border: `1px solid ${C.border}`, background: C.raised, color: C.faint, cursor: "pointer", flexShrink: 0 }}>
+                    <Trash2 size={15} />
+                  </button>
+                )}
               </div>
 
               <div ref={scrollRef} className="scroll" style={{ flex: 1, overflowY: "auto", padding: "18px 16px" }}>
